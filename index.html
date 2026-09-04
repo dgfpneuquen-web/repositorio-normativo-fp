@@ -3,10 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="referrer" content="no-referrer" />
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<!-- SEGURIDAD_DGFP_2026-09-04: el frontend NO contiene URL ni ID de Google Sheets/Drive -->
 <title>Repositorio Normativo FP - DGFP</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 :root{
   --azul:#00366f;
@@ -187,8 +189,7 @@ td{padding:10px 14px;border-bottom:1px solid #e5edf7;vertical-align:middle;color
 </footer>
 
 <script>
-const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQcqolszYmjU_seuDCPVLaWeJnqxzHLeLgxXia7BhzhNXSxzZx3F8ycLNriupZQtw38dCy-yv086c5E/pub?gid=0&single=true&output=csv";
-const SHEET_GVIZ_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQcqolszYmjU_seuDCPVLaWeJnqxzHLeLgxXia7BhzhNXSxzZx3F8ycLNriupZQtw38dCy-yv086c5E/gviz/tq?gid=0";
+const API_URL = "PEGAR_AQUI_URL_DEL_WEB_APP_APPS_SCRIPT";
 let allRows = [];
 let filteredRows = [];
 const els = {};
@@ -209,10 +210,8 @@ async function loadData(){
   setStatus('Cargando normativas...', '');
   els.normativasTbody.innerHTML = '<tr class="empty-row"><td colspan="6">Cargando normativas...</td></tr>';
   try{
-    // Método estable para GitHub Pages:
-    // 1) intenta leer el CSV publicado; 2) si Google bloquea CORS, usa un puente público.
-    const data = await loadSheetData();
-    if(!data.length) throw new Error('La planilla no devolvió datos.');
+    const data = await loadPublicData();
+    if(!Array.isArray(data) || data.length < 2) throw new Error('El servicio público no devolvió datos.');
     const header = data.shift().map(h => normalizeHeader(h));
     allRows = data.map(row => toObject(header, row)).filter(r => r.nombre || r.link || r.tipo);
     allRows = allRows.map(cleanRow);
@@ -225,55 +224,25 @@ async function loadData(){
   }catch(err){
     console.error(err);
     setStatus('● Error: ' + err.message, 'error');
-    els.normativasTbody.innerHTML = '<tr class="empty-row"><td colspan="6">No se pudieron cargar las normativas. Revisá que la hoja siga publicada y volvé a tocar Actualizar.</td></tr>';
+    els.normativasTbody.innerHTML = '<tr class="empty-row"><td colspan="6">No se pudieron cargar las normativas. Volvé a intentar en unos minutos.</td></tr>';
   }
 }
 
-async function loadSheetData(){
-  const errors = [];
-
-  // Intento 1: CSV directo publicado por Google Sheets.
-  try{
-    const csvText = await fetchText(CSV_URL + '&cachebust=' + Date.now());
-    const rows = parseCSV(csvText);
-    if(rows && rows.length > 1) return rows;
-    errors.push('CSV directo sin datos');
-  }catch(e){ errors.push('CSV directo: ' + e.message); }
-
-  // Intento 2: puente CORS. No cambia tu planilla ni tus datos; solo permite leer el CSV desde GitHub Pages.
-  try{
-    const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(CSV_URL + '&cachebust=' + Date.now());
-    const csvText = await fetchText(proxyUrl);
-    const rows = parseCSV(csvText);
-    if(rows && rows.length > 1) return rows;
-    errors.push('Puente CSV sin datos');
-  }catch(e){ errors.push('Puente CSV: ' + e.message); }
-
-  // Intento 3: Google Visualization, por si el navegador permite JSONP.
-  try{
-    const rows = await loadSheetViaJsonp();
-    if(rows && rows.length > 1) return rows;
-    errors.push('GViz sin datos');
-  }catch(e){ errors.push('GViz: ' + e.message); }
-
-  throw new Error('No se pudo conectar con Google Sheets.');
-}
-
-async function fetchText(url){
-  const res = await fetch(url, { cache:'no-store' });
-  if(!res.ok) throw new Error('HTTP ' + res.status);
-  const text = await res.text();
-  if(!text || !text.trim()) throw new Error('respuesta vacía');
-  return text;
-}
-
-function loadSheetViaJsonp(){
+/*
+  Carga únicamente datos públicos desde un Web App de Apps Script.
+  El ID/URL de la planilla y de Drive NO están presentes en este archivo.
+*/
+function loadPublicData(){
   return new Promise((resolve, reject) => {
-    const callbackName = 'fpNormativasCallback_' + Date.now();
+    if(!API_URL || API_URL.includes('PEGAR_AQUI')){
+      reject(new Error('Falta configurar la URL pública del servicio.'));
+      return;
+    }
+    const callbackName = 'dgfpRepoCallback_' + Date.now() + '_' + Math.floor(Math.random()*100000);
     const script = document.createElement('script');
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error('Tiempo de espera agotado al leer Google Sheets.'));
+      reject(new Error('Tiempo de espera agotado.'));
     }, 15000);
 
     function cleanup(){
@@ -284,13 +253,11 @@ function loadSheetViaJsonp(){
 
     window[callbackName] = (response) => {
       try{
-        if(!response || !response.table || !response.table.rows){
-          throw new Error('Respuesta inválida de Google Sheets.');
+        if(!response || response.ok !== true || !Array.isArray(response.rows)){
+          throw new Error((response && response.error) || 'Respuesta inválida.');
         }
-        const cols = response.table.cols.map(c => c.label || '');
-        const rows = response.table.rows.map(r => (r.c || []).map(cell => cell ? (cell.f || cell.v || '') : ''));
         cleanup();
-        resolve([cols, ...rows]);
+        resolve(response.rows);
       }catch(error){
         cleanup();
         reject(error);
@@ -299,31 +266,13 @@ function loadSheetViaJsonp(){
 
     script.onerror = () => {
       cleanup();
-      reject(new Error('No se pudo conectar con Google Sheets.'));
+      reject(new Error('No se pudo conectar con el servicio público.'));
     };
-    script.src = SHEET_GVIZ_URL + '&tqx=out:json;responseHandler:' + callbackName + '&cachebust=' + Date.now();
+
+    const sep = API_URL.includes('?') ? '&' : '?';
+    script.src = API_URL + sep + 'callback=' + encodeURIComponent(callbackName) + '&v=' + Date.now();
     document.body.appendChild(script);
   });
-}
-
-function parseCSV(text){
-  const rows=[]; let row=[], field='', inQuotes=false;
-  for(let i=0;i<text.length;i++){
-    const c=text[i], n=text[i+1];
-    if(c==='"'){
-      if(inQuotes && n==='"'){ field+='"'; i++; }
-      else inQuotes=!inQuotes;
-    } else if(c===',' && !inQuotes){ row.push(field); field=''; }
-    else if((c==='\n' || c==='\r') && !inQuotes){
-      if(c==='\r' && n==='\n') i++;
-      row.push(field); field='';
-      if(row.some(x=>String(x).trim()!=='')) rows.push(row);
-      row=[];
-    } else field+=c;
-  }
-  row.push(field);
-  if(row.some(x=>String(x).trim()!=='')) rows.push(row);
-  return rows;
 }
 
 function normalizeHeader(h){
@@ -481,7 +430,14 @@ function colorFor(t){
 function badgeClass(t){ if(t.includes('Ley')) return 'b-ley'; if(t.includes('Decreto')) return 'b-dec'; if(t.includes('Disposición')) return 'b-dis'; if(t.includes('Circular')) return 'b-cir'; return 'b-res'; }
 function folderClass(t){ if(t.includes('Ley')) return 'f-green'; if(t.includes('CPE')||t.includes('CFE')) return 'f-purple'; if(t.includes('Disposición')) return 'f-orange'; if(t.includes('Circular')) return 'f-cyan'; return ''; }
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
-function escapeAttr(s){ return escapeHtml(s).replace(/`/g,'&#096;'); }
+function safePublicUrl(s){
+  try{
+    const u = new URL(String(s||''), window.location.href);
+    if(u.protocol !== 'https:' && u.protocol !== 'http:') return '#';
+    return u.href;
+  }catch(_){ return '#'; }
+}
+function escapeAttr(s){ return escapeHtml(safePublicUrl(s)).replace(/`/g,'&#096;'); }
 </script>
 
 </body>
